@@ -33,6 +33,7 @@ CREATE TABLE Deposits (
                           amount DECIMAL(14,2) NOT NULL,
                           start_date DATE NOT NULL,
                           end_date DATE NOT NULL,
+                          status VARCHAR(50) NOT NULL DEFAULT 'active',
                           FOREIGN KEY (account_id) REFERENCES Accounts(id) ON DELETE CASCADE
 );
 

@@ -11,6 +11,7 @@ import java.io.EOFException
 import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
+import ru.banking.services.DepositService
 
 fun main() {
     DatabaseFactory.init()
@@ -95,9 +96,26 @@ class ClientHandler(private val client: Socket) : Runnable {
                 val transactions = TransactionService.getTransactions(request.data)
                 JsonObject(mapOf("transactions" to Json.encodeToJsonElement(transactions)))
             }
+            "OPEN_DEPOSIT" -> JsonObject(mapOf("message" to JsonPrimitive(DepositService.openDeposit(request.data))))
+            "CLOSE_DEPOSIT" -> {
+                val userId = request.data["userId"]?.jsonPrimitive?.intOrNull
+                val depositId = request.data["depositId"]?.jsonPrimitive?.intOrNull
+                if (userId != null && depositId != null) {
+                    val response = DepositService.closeDeposit(JsonObject(mapOf("depositId" to JsonPrimitive(depositId), "userId" to JsonPrimitive(userId))))
+                    JsonObject(mapOf("status" to JsonPrimitive(response.status), "message" to JsonPrimitive(response.message)))
+                } else {
+                    JsonObject(mapOf("status" to JsonPrimitive("error"), "message" to JsonPrimitive("Invalid request data")))
+                }
+            }
+            "GET_DEPOSITS" -> JsonObject(mapOf("deposits" to Json.encodeToJsonElement(
+                DepositService.getDeposits(
+                    request.data["userId"]?.jsonPrimitive?.intOrNull ?: return JsonObject(mapOf("error" to JsonPrimitive("User ID not found"))))
+            )))
+            //"SET_MAIN_CARD" -> JsonObject(mapOf("message" to JsonPrimitive(DepositService.setMainCard(request.data))))
             else -> JsonObject(mapOf("error" to JsonPrimitive("Invalid request type")))
         }
     }
+
 
     private fun createJsonResponse(data: Map<String, Any>): JsonObject {
         val jsonMap = data.mapValues { entry ->
