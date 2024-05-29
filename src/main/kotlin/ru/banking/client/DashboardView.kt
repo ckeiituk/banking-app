@@ -21,7 +21,7 @@ class DashboardView : View("Dashboard") {
         }
         button("View Deposits") {
             action {
-                replaceWith<DepositsView>()
+                //replaceWith<DepositsView>()
             }
         }
         button("Internal Transfer") {

@@ -3,14 +3,11 @@ package ru.banking.client
 import javafx.geometry.Pos
 import tornadofx.*
 import java.net.Socket
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
 import ru.banking.models.Request
 import ru.banking.models.TransferResponse
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 class ExternalTransferView : View("External Transfer") {
     private val cardNumberField = textfield()
@@ -28,7 +25,7 @@ class ExternalTransferView : View("External Transfer") {
             field("From Card") {
                 add(fromCardField)
             }
-            field("Card Number") {
+            field("To Card Number") {
                 add(cardNumberField)
             }
             field("Amount") {
@@ -40,14 +37,26 @@ class ExternalTransferView : View("External Transfer") {
             button("Submit") {
                 action {
                     val cardNumber = cardNumberField.text
-                    val amount = amountField.text.toDouble()
+                    val amount = amountField.text.toDoubleOrNull()
                     val fromCard = fromCardField.selectedItem
-                    if (fromCard != null) {
-                        val response = handleTransfer(fromCard, cardNumber, amount)
-                        messageLabel.text = response.message
-                    } else {
+
+                    if (fromCard == null) {
                         messageLabel.text = "Please select a card"
+                        return@action
                     }
+
+                    if (!isValidCardNumber(cardNumber)) {
+                        messageLabel.text = "Invalid card number"
+                        return@action
+                    }
+
+                    if (amount == null || amount <= 0) {
+                        messageLabel.text = "Please enter a valid amount"
+                        return@action
+                    }
+
+                    val response = handleTransfer(fromCard, cardNumber, amount)
+                    messageLabel.text = response.message
                 }
             }
             button("Back") {
@@ -70,49 +79,71 @@ class ExternalTransferView : View("External Transfer") {
     private fun fetchCards(): List<String> {
         return try {
             val client = Socket("127.0.0.1", 9999)
-            val output = ObjectOutputStream(client.getOutputStream())
-            val input = ObjectInputStream(client.getInputStream())
+            val output = client.getOutputStream().bufferedWriter()
+            val input = client.getInputStream().bufferedReader()
 
             val requestData = buildJsonObject {
-                put("userId", Session.userId as Int)
+                put("userId", JsonPrimitive(Session.userId))
             }
             val request = Request("GET_CARDS", requestData)
+            val requestJson = Json.encodeToString(Request.serializer(), request)
+            println("Sending request: $requestJson")
 
-            output.writeObject(Json.encodeToString(Request.serializer(), request))
+            output.write(requestJson)
+            output.newLine()
             output.flush()
+            println("Request sent")
 
-            val response = input.readObject() as String
+            val responseJson = input.readLine()
+            println("Received response: $responseJson")
             client.close()
 
-            val cards = Json.decodeFromString<List<Map<String, Any>>>(response)
-            cards.map { it["cardNumber"].toString() }
+            val jsonResponse = Json.decodeFromString<JsonObject>(responseJson)
+            val cards = jsonResponse["cards"]?.jsonArray
+
+            cards?.map {
+                val cardNumber = it.jsonObject["cardNumber"]?.jsonPrimitive?.content ?: ""
+                val balance = it.jsonObject["balance"]?.jsonPrimitive?.content ?: ""
+                "Card Number: $cardNumber, Balance: $balance"
+            } ?: emptyList()
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
         }
     }
 
+    private fun isValidCardNumber(cardNumber: String): Boolean {
+        return cardNumber.all { it.isDigit() } && cardNumber.length == 16
+    }
+
     private fun handleTransfer(fromCard: String, toCardNumber: String, amount: Double): TransferResponse {
         return try {
             val client = Socket("127.0.0.1", 9999)
-            val output = ObjectOutputStream(client.getOutputStream())
-            val input = ObjectInputStream(client.getInputStream())
+            val output = client.getOutputStream().bufferedWriter()
+            val input = client.getInputStream().bufferedReader()
+
+            val fromCardNumber = fromCard.split(",")[0].split(":").getOrNull(1)?.trim() ?: return TransferResponse("error", "Invalid from card format")
 
             val transferData = buildJsonObject {
-                put("userId", Session.userId as Int)
-                put("fromCard", fromCard)
-                put("toCardNumber", toCardNumber)
-                put("amount", amount)
+                put("userId", JsonPrimitive(Session.userId))
+                put("fromCard", JsonPrimitive(fromCardNumber))
+                put("toCard", JsonPrimitive(toCardNumber))
+                put("amount", JsonPrimitive(amount))
             }
             val request = Request("EXTERNAL_TRANSFER", transferData)
+            val requestJson = Json.encodeToString(Request.serializer(), request)
+            println("Sending request: $requestJson")
 
-            output.writeObject(Json.encodeToString(Request.serializer(), request))
+            output.write(requestJson)
+            output.newLine()
             output.flush()
+            println("Request sent")
 
-            val response = input.readObject() as String
-
+            val responseJson = input.readLine()
+            println("Received response: $responseJson")
             client.close()
-            Json.decodeFromString(response)
+
+            Json.decodeFromString(responseJson)
         } catch (e: Exception) {
             e.printStackTrace()
             TransferResponse("error", "Unable to complete the transfer")
