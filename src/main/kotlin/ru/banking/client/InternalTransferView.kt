@@ -3,14 +3,12 @@ package ru.banking.client
 import javafx.geometry.Pos
 import tornadofx.*
 import java.net.Socket
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
+
 import ru.banking.models.Request
 import ru.banking.models.TransferResponse
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 class InternalTransferView : View("Internal Transfer") {
     private val amountField = textfield()
@@ -40,12 +38,22 @@ class InternalTransferView : View("Internal Transfer") {
             alignment = Pos.CENTER
             button("Submit") {
                 action {
-                    val amount = amountField.text.toDouble()
+                    val amountText = amountField.text
+                    val amount = amountText.toDoubleOrNull()
+
+                    if (amount == null || amount <= 0) {
+                        messageLabel.text = "Please enter a positive amount"
+                        return@action
+                    }
+
                     val fromCard = fromCardField.selectedItem
                     val toCard = toCardField.selectedItem
                     if (fromCard != null && toCard != null) {
                         val response = handleTransfer(fromCard, toCard, amount)
                         messageLabel.text = response.message
+                        if (response.status == "success") {
+                            populateCards() // Refresh cards after successful transfer
+                        }
                     } else {
                         messageLabel.text = "Please select both cards"
                     }
@@ -60,6 +68,11 @@ class InternalTransferView : View("Internal Transfer") {
         add(messageLabel)
     }
 
+    override fun onDock() {
+        super.onDock()
+        populateCards()
+    }
+
     private fun populateCards() {
         runAsync {
             fetchCards()
@@ -72,22 +85,33 @@ class InternalTransferView : View("Internal Transfer") {
     private fun fetchCards(): List<String> {
         return try {
             val client = Socket("127.0.0.1", 9999)
-            val output = ObjectOutputStream(client.getOutputStream())
-            val input = ObjectInputStream(client.getInputStream())
+            val output = client.getOutputStream().bufferedWriter()
+            val input = client.getInputStream().bufferedReader()
 
             val requestData = buildJsonObject {
-                put("userId", Session.userId as Int)
+                put("userId", JsonPrimitive(Session.userId))
             }
             val request = Request("GET_CARDS", requestData)
+            val requestJson = Json.encodeToString(Request.serializer(), request)
+            println("Sending request: $requestJson")
 
-            output.writeObject(Json.encodeToString(Request.serializer(), request))
+            output.write(requestJson)
+            output.newLine()
             output.flush()
+            println("Request sent")
 
-            val response = input.readObject() as String
+            val responseJson = input.readLine()
+            println("Received response: $responseJson")
             client.close()
 
-            val cards = Json.decodeFromString<List<Map<String, Any>>>(response)
-            cards.map { it["cardNumber"].toString() }
+            val jsonResponse = Json.decodeFromString<JsonObject>(responseJson)
+            val cards = jsonResponse["cards"]?.jsonArray
+
+            cards?.map {
+                val cardNumber = it.jsonObject["cardNumber"]?.jsonPrimitive?.content ?: ""
+                val balance = it.jsonObject["balance"]?.jsonPrimitive?.content ?: ""
+                "Card Number: $cardNumber, Balance: $balance"
+            } ?: emptyList()
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
@@ -97,24 +121,29 @@ class InternalTransferView : View("Internal Transfer") {
     private fun handleTransfer(fromCard: String, toCard: String, amount: Double): TransferResponse {
         return try {
             val client = Socket("127.0.0.1", 9999)
-            val output = ObjectOutputStream(client.getOutputStream())
-            val input = ObjectInputStream(client.getInputStream())
+            val output = client.getOutputStream().bufferedWriter()
+            val input = client.getInputStream().bufferedReader()
 
             val transferData = buildJsonObject {
-                put("userId", Session.userId as Int)
-                put("fromCard", fromCard)
-                put("toCard", toCard)
-                put("amount", amount)
+                put("userId", JsonPrimitive(Session.userId))
+                put("fromCard", JsonPrimitive(fromCard.split(",")[0].split(":")[1].trim()))
+                put("toCard", JsonPrimitive(toCard.split(",")[0].split(":")[1].trim()))
+                put("amount", JsonPrimitive(amount))
             }
             val request = Request("INTERNAL_TRANSFER", transferData)
+            val requestJson = Json.encodeToString(Request.serializer(), request)
+            println("Sending request: $requestJson")
 
-            output.writeObject(Json.encodeToString(Request.serializer(), request))
+            output.write(requestJson)
+            output.newLine()
             output.flush()
+            println("Request sent")
 
-            val response = input.readObject() as String
-
+            val responseJson = input.readLine()
+            println("Received response: $responseJson")
             client.close()
-            Json.decodeFromString(response)
+
+            Json.decodeFromString(responseJson)
         } catch (e: Exception) {
             e.printStackTrace()
             TransferResponse("error", "Unable to complete the transfer")

@@ -13,12 +13,12 @@ repositories {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.5.30")
-    implementation("org.jetbrains.exposed:exposed-core:0.36.2")
-    implementation("org.jetbrains.exposed:exposed-dao:0.36.2")
-    implementation("org.jetbrains.exposed:exposed-jdbc:0.36.2")
-    implementation("org.jetbrains.exposed:exposed-java-time:0.36.2")
-    runtimeOnly("mysql:mysql-connector-java:8.0.25")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.0.0")
+    implementation("org.jetbrains.exposed:exposed-core:0.50.1")
+    implementation("org.jetbrains.exposed:exposed-dao:0.50.1")
+    implementation("org.jetbrains.exposed:exposed-jdbc:0.50.1")
+    implementation("org.jetbrains.exposed:exposed-java-time:0.50.1")
+    runtimeOnly("mysql:mysql-connector-java:8.0.33")
     implementation("org.mindrot:jbcrypt:0.4")
     implementation("no.tornado:tornadofx:1.7.20")
     implementation("org.openjfx:javafx-controls:17.0.1")

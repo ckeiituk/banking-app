@@ -1,13 +1,14 @@
 package ru.banking.services
 
-import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.transactions.transaction
 import ru.banking.database.Cards
+import ru.banking.database.Transactions
 import ru.banking.models.Card
+import ru.banking.models.TransferResponse
 import java.time.LocalDateTime
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.*
+import org.jetbrains.exposed.dao.id.EntityID
 
 object TransactionService {
     fun getCards(data: JsonObject): List<Card> {
@@ -52,6 +53,85 @@ object TransactionService {
         println("Initial Balance: $initialBalance")
 
         return result
+    }
+
+    fun handleInternalTransfer(data: JsonObject): TransferResponse {
+        val userId = data["userId"]?.jsonPrimitive?.intOrNull ?: return TransferResponse("error", "User ID not found")
+        val fromCardNumber = data["fromCard"]?.jsonPrimitive?.content ?: return TransferResponse("error", "From Card not found")
+        val toCardNumber = data["toCard"]?.jsonPrimitive?.content ?: return TransferResponse("error", "To Card not found")
+        val amount = data["amount"]?.jsonPrimitive?.doubleOrNull ?: return TransferResponse("error", "Amount not found")
+
+        if (amount <= 0) {
+            return TransferResponse("error", "Amount must be positive")
+        }
+
+        return transaction {
+            val fromCard = Cards.select { Cards.cardNumber eq fromCardNumber }.singleOrNull()
+            val toCard = Cards.select { Cards.cardNumber eq toCardNumber }.singleOrNull()
+
+            if (fromCard == null || toCard == null) {
+                TransferResponse("error", "One or both cards not found")
+            } else {
+                val fromCardBalance = fromCard[Cards.balance]
+                val toCardBalance = toCard[Cards.balance]
+
+                if (fromCardBalance >= amount) {
+                    Cards.update({ Cards.cardNumber eq fromCardNumber }) {
+                        it[Cards.balance] = fromCardBalance - amount
+                    }
+
+                    Cards.update({ Cards.cardNumber eq toCardNumber }) {
+                        it[Cards.balance] = toCardBalance + amount
+                    }
+
+                    Transactions.insert {
+                        it[Transactions.fromCard] = fromCard[Cards.id].value
+                        it[Transactions.toCard] = toCard[Cards.id].value
+                        it[Transactions.amount] = amount
+                        it[Transactions.transactionDate] = LocalDateTime.now()
+                        it[Transactions.status] = "Completed"
+                    }
+
+                    TransferResponse("success", "Transaction completed")
+                } else {
+                    TransferResponse("error", "Insufficient funds")
+                }
+            }
+        }
+    }
+
+    fun getTransactions(data: JsonObject): List<JsonObject> {
+        val userId = data["userId"]?.jsonPrimitive?.intOrNull ?: return emptyList()
+
+        val fromTransactions = transaction {
+            Transactions
+                .select { Transactions.fromCard inSubQuery (Cards.slice(Cards.id).select { Cards.userId eq userId }) }
+                .map {
+                    JsonObject(mapOf(
+                        "fromCard" to JsonPrimitive(it[Transactions.fromCard].toString()),
+                        "toCard" to JsonPrimitive(it[Transactions.toCard].toString()),
+                        "amount" to JsonPrimitive(it[Transactions.amount]),
+                        "transactionDate" to JsonPrimitive(it[Transactions.transactionDate].toString()),
+                        "status" to JsonPrimitive(it[Transactions.status])
+                    ))
+                }
+        }
+
+        val toTransactions = transaction {
+            Transactions
+                .select { Transactions.toCard inSubQuery (Cards.slice(Cards.id).select { Cards.userId eq userId }) }
+                .map {
+                    JsonObject(mapOf(
+                        "fromCard" to JsonPrimitive(it[Transactions.fromCard].toString()),
+                        "toCard" to JsonPrimitive(it[Transactions.toCard].toString()),
+                        "amount" to JsonPrimitive(it[Transactions.amount]),
+                        "transactionDate" to JsonPrimitive(it[Transactions.transactionDate].toString()),
+                        "status" to JsonPrimitive(it[Transactions.status])
+                    ))
+                }
+        }
+
+        return fromTransactions + toTransactions
     }
 
     private fun generateCardNumber(): String {

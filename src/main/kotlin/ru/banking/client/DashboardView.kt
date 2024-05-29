@@ -1,20 +1,19 @@
 package ru.banking.client
 
-import javafx.geometry.Pos
 import tornadofx.*
 import java.net.Socket
-import ru.banking.models.Request
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+import ru.banking.models.Request
 
 class DashboardView : View("Dashboard") {
-    private val cardsList = mutableListOf<String>().asObservable()
-    private val messageLabel = label()
+    private val cardList = mutableListOf<String>().asObservable()
 
     override val root = vbox(10) {
-        alignment = Pos.CENTER
         label("Welcome to your dashboard!")
+        listview(cardList)
+
         button("Open Card") {
             action {
                 replaceWith<OpenCardView>()
@@ -35,39 +34,34 @@ class DashboardView : View("Dashboard") {
                 replaceWith<ExternalTransferView>()
             }
         }
-        listview(cardsList)
-        button("Refresh Cards") {
+        button("View Transaction Log") {
             action {
-                println("Refresh button clicked")
-                refreshCards()
+                replaceWith<TransactionLogView>()
             }
         }
-        add(messageLabel)
     }
 
-    init {
-        refreshCards()
+    override fun onDock() {
+        super.onDock()
+        populateCards()
     }
 
-    private fun refreshCards() {
-        val response = fetchCards()
-        handleResponse(response)
+    private fun populateCards() {
+        runAsync {
+            fetchCards()
+        } ui { cards ->
+            cardList.setAll(cards)
+        }
     }
 
-    private fun fetchCards(): String {
-        val userId = Session.userId ?: return "User ID not found"
-        println("User ID: $userId")
-
+    private fun fetchCards(): List<String> {
         return try {
-            println("Connecting to server...")
             val client = Socket("127.0.0.1", 9999)
-            println("Connected to server")
-
             val output = client.getOutputStream().bufferedWriter()
             val input = client.getInputStream().bufferedReader()
 
             val requestData = buildJsonObject {
-                put("userId", JsonPrimitive(userId))  // Используем JsonPrimitive для userId
+                put("userId", JsonPrimitive(Session.userId))
             }
             val request = Request("GET_CARDS", requestData)
             val requestJson = Json.encodeToString(Request.serializer(), request)
@@ -78,40 +72,21 @@ class DashboardView : View("Dashboard") {
             output.flush()
             println("Request sent")
 
-            val response = input.readLine()
-            println("Received response: $response")
-
+            val responseJson = input.readLine()
+            println("Received response: $responseJson")
             client.close()
-            println("Connection closed")
-            response
-        } catch (e: Exception) {
-            e.printStackTrace()
-            "Error: Unable to connect to server"
-        }
-    }
 
-    private fun handleResponse(response: String) {
-        try {
-            val jsonResponse = Json.decodeFromString<JsonObject>(response)
+            val jsonResponse = Json.decodeFromString<JsonObject>(responseJson)
             val cards = jsonResponse["cards"]?.jsonArray
 
-            if (cards != null) {
-                cardsList.clear()
-                for (card in cards) {
-                    val cardNumber = card.jsonObject["cardNumber"]?.jsonPrimitive?.content
-                    val expirationDate = card.jsonObject["expirationDate"]?.jsonPrimitive?.content
-                    val cvv = card.jsonObject["cvv"]?.jsonPrimitive?.content
-                    val balance = card.jsonObject["balance"]?.jsonPrimitive?.content
-
-                    cardsList.add("Card Number: $cardNumber, Expiration Date: $expirationDate, CVV: $cvv, Balance: $balance")
-                }
-                messageLabel.text = "Cards fetched successfully"
-            } else {
-                messageLabel.text = "Error: No cards found"
-            }
+            cards?.map {
+                val cardNumber = it.jsonObject["cardNumber"]?.jsonPrimitive?.content ?: ""
+                val balance = it.jsonObject["balance"]?.jsonPrimitive?.content ?: ""
+                "Card Number: $cardNumber, Balance: $balance"
+            } ?: emptyList()
         } catch (e: Exception) {
             e.printStackTrace()
-            messageLabel.text = "Error: Unable to process server response"
+            emptyList()
         }
     }
 }
